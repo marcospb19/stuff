@@ -1,0 +1,9 @@
+[package]
+name = "tomate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.3.10", features = ["derive", "wrap_help"] }
+notify-rust = "4.8.0"
+owo-colors = "3.5.0"
