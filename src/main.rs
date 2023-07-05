@@ -1,9 +1,13 @@
 mod colors;
 mod error;
+mod nightly;
 mod notification;
 mod stdin;
 
 use std::{
+    fmt::Display,
+    io,
+    io::Write,
     sync::mpsc::Receiver,
     time::{Duration, Instant},
 };
@@ -11,14 +15,16 @@ use std::{
 use clap::Parser;
 use owo_colors::OwoColorize;
 
-use crate::{notification::send_notification, stdin::spawn_stdin_channel};
+use crate::{nightly::recv_deadline, notification::send_notification, stdin::spawn_stdin_channel};
+
+const MINUTE: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 enum CliArgs {
     /// A standard sprint of 4 x 25/5.
     Sprint,
     /// Run tomates of custom Work/Rest.
-    Custom { work_time: u64, rest_time: u64 },
+    Custom { work_time: u32, rest_time: u32 },
 }
 
 fn main() {
@@ -34,8 +40,8 @@ fn main() {
 }
 
 struct Tomato {
-    work_time: u64,
-    rest_time: u64,
+    work_time: u32,
+    rest_time: u32,
     current_tomato: u64,
     stdin_receiver: Receiver<String>,
     reward_emoji_iter: Box<dyn Iterator<Item = &'static str>>,
@@ -54,16 +60,16 @@ impl Tomato {
         }
     }
 
-    pub fn work_time(self, work_time: u64) -> Self {
+    pub fn work_time(self, work_time: u32) -> Self {
         Self { work_time, ..self }
     }
 
-    pub fn rest_time(self, rest_time: u64) -> Self {
+    pub fn rest_time(self, rest_time: u32) -> Self {
         Self { rest_time, ..self }
     }
 
     pub fn run_sprint(mut self) {
-        while self.current_tomato < 5 {
+        while self.current_tomato < 4 {
             self.run_once();
         }
     }
@@ -82,85 +88,119 @@ impl Tomato {
     }
 
     fn run_work_timer(&mut self) {
+        send_notification(format!("Iniciando tomate de {} minutos!", self.work_time));
         showln!(
-            format_args!("[{}]", self.current_tomato).magenta(),
+            format_args!("[{}]", self.current_tomato).red(),
             " Tomate de ",
             format_args!("{} minutos", self.work_time).blue(),
             " iniciado! ",
         );
 
-        let total_duration = Duration::from_secs(self.work_time * 60);
+        let total_duration = MINUTE * self.work_time;
         let half_duration = total_duration / 2;
 
-        let was_skipped = self.run_pausable_timer(half_duration);
+        let status = "[Work]".magenta();
+        let was_skipped = self.run_pausable_timer(half_duration, half_duration, &status);
 
         // Extra logic to be able to send a notification at the half
         if !was_skipped {
             send_notification(format!(
-                "Na metade! Você está focado não está? {}",
+                "Na metade! Você está focado, não está? {}",
                 self.micro_management_emoji_iter.next().unwrap(),
             ));
-            self.run_pausable_timer(half_duration);
+            self.run_pausable_timer(half_duration, None, &status);
         }
 
+        let reward_emoji = self.reward_emoji_iter.next().unwrap();
+
         showln!(
-            "Tomate ",
+            "\n  ",
+            "[Eba!]".green(),
+            " Tomate ",
             format_args!("{}", self.current_tomato).red(),
             " concluído!".green(),
             " Sua recompensa: ",
-            self.reward_emoji_iter.next().unwrap(),
+            reward_emoji,
         );
+
+        send_notification(format!(
+            "Tomate {} concluído! {reward_emoji} Descanse {} minutos.",
+            self.current_tomato, self.rest_time,
+        ));
     }
 
     fn run_rest_timer(&mut self) {
-        let total_duration = Duration::from_secs(self.rest_time * 60);
-        self.run_pausable_timer(total_duration);
+        let total_duration = MINUTE * self.rest_time;
+        self.run_pausable_timer(total_duration, None, "[Rest]".cyan());
+        println!();
     }
 
-    /// Returns if timer was skipped.
-    fn run_pausable_timer(&mut self, mut remaining: Duration) -> bool {
-        loop {
-            let start_instant = Instant::now();
+    fn run_pausable_timer(
+        &self,
+        mut remaining: Duration,
+        additional_time_to_display: impl Into<Option<Duration>>,
+        status: impl Display,
+    ) -> bool {
+        let additional_time_to_display = additional_time_to_display.into().unwrap_or_default();
+        let start_instant = Instant::now();
 
-            // // // How can I show this?
-            // // Work for 24:59 (25 minutes)
-            // println!("\r"); // !?!?!?!?
+        let increment = Duration::from_secs(1);
+        let mut increment_sum = increment;
 
-            match self.sleep_for(remaining) {
-                SleepResult::Finished => return false,
-                SleepResult::Skipped => return true,
-                SleepResult::Paused => { /* continue and handle pause */ }
+        let mut stdout = io::stdout();
+
+        while remaining != Duration::ZERO {
+            // Print line
+            let display_remaining = remaining + additional_time_to_display;
+            let remaining_minutes = display_remaining.as_secs() / 60;
+            let remaining_seconds = display_remaining.as_secs() % 60;
+            write!(
+                stdout,
+                "\r  {status} {remaining_minutes:02}:{remaining_seconds:02}          ",
+            )
+            .unwrap();
+            stdout.flush().unwrap();
+
+            // Sleep
+            let instant_to_reach = start_instant + increment_sum;
+
+            if let Ok(line) = recv_deadline(&self.stdin_receiver, instant_to_reach) {
+                go_back_one_line();
+
+                if line.contains('p') {
+                    return true;
+                } else {
+                    write!(
+                        stdout,
+                        "\r  {status} {remaining_minutes:02}:{remaining_seconds:02} {} ",
+                        "(Paused)".red()
+                    )
+                    .unwrap();
+                    stdout.flush().unwrap();
+
+                    return if self.wait_unpause() {
+                        true
+                    } else {
+                        self.run_pausable_timer(remaining, additional_time_to_display, status)
+                    };
+                }
             }
 
-            let elapsed = start_instant.elapsed();
-            remaining = remaining.saturating_sub(elapsed);
-            showln!("Paused.".red());
-
-            if self.wait_unpause() {
-                break true;
-            }
-
-            let _ = self.stdin_receiver.recv();
-            showln!("Unpaused.".green());
+            // Account for slept duration
+            increment_sum += increment;
+            remaining -= increment;
         }
-    }
-
-    fn sleep_for(&self, duration: Duration) -> SleepResult {
-        match self.stdin_receiver.recv_timeout(duration) {
-            Ok(line) if line.contains("skip") => SleepResult::Skipped,
-            Ok(_) => SleepResult::Paused,
-            Err(_) => SleepResult::Finished,
-        }
+        false
     }
 
     /// Returns if skipping was requested
     fn wait_unpause(&self) -> bool {
-        self.stdin_receiver.recv().unwrap().contains("skip")
+        let was_skipped = self.stdin_receiver.recv().unwrap().contains('p');
+        go_back_one_line();
+        was_skipped
     }
 }
 
-enum SleepResult {
-    Finished,
-    Paused,
-    Skipped,
+fn go_back_one_line() {
+    print!("\x1B[1A\x1B[{}D", u16::MAX);
 }

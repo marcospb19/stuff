@@ -1,16 +1,16 @@
 # Tomate
 
-A CLI pomodoro timer.
+Um pomodoro no CLI.
 
-# Usage
+# Usagem
 
 ```sh
 # 4 x 25/5
 tomate sprint
 
-# Repeat 15/3
+# Repete 15/3 indefinitamente
 tomate custom 15 3
 ```
 
-1. To pause the timer, press `ENTER`.
-2. To skip current timer, type `skip` and then press `ENTER`.
+1. Para pausar o relógio, aperte `ENTER`.
+2. Para pular a contagem atual, escreva `p` e aperte `ENTER`.

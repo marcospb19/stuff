@@ -23,6 +23,6 @@ impl<T, E> UnwrapOrExplode<T> for Result<T, E> {
 }
 
 fn explode_error(message: &str) -> ! {
-    crate::show!("Error".red(), ":", format_args!("{message}"));
+    crate::show!("Error".red(), ": ", format_args!("{message}"));
     std::process::exit(1)
 }
