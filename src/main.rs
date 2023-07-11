@@ -15,28 +15,31 @@ use std::{
 use clap::Parser;
 use owo_colors::OwoColorize;
 
-use crate::{nightly::recv_deadline, notification::send_notification, stdin::spawn_stdin_channel};
+use crate::{
+    error::UnwrapOrExplode, nightly::recv_deadline, notification::send_notification, stdin::spawn_stdin_channel,
+};
 
 const MINUTE: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
-enum CliArgs {
-    /// A standard sprint of 4 x 25/5.
-    Sprint,
-    /// Run tomates of custom Work/Rest.
-    Custom { work_time: u32, rest_time: u32 },
+struct CliArgs {
+    work_time: Option<u32>,
+    rest_time: Option<u32>,
 }
 
 fn main() {
     let args = CliArgs::parse();
 
-    let stdin_rx = spawn_stdin_channel();
-    let tomato = Tomato::new(stdin_rx);
+    let mut tomato = Tomato::new();
 
-    match args {
-        CliArgs::Sprint => tomato.run_sprint(),
-        CliArgs::Custom { work_time, rest_time } => tomato.work_time(work_time).rest_time(rest_time).run_indefinetely(),
+    if let Some(work) = args.work_time {
+        tomato = tomato.set_work_time(work);
     }
+    if let Some(rest) = args.rest_time {
+        tomato = tomato.set_rest_time(rest);
+    }
+
+    tomato.run_sprint();
 }
 
 struct Tomato {
@@ -49,33 +52,33 @@ struct Tomato {
 }
 
 impl Tomato {
-    pub fn new(stdin_receiver: Receiver<String>) -> Self {
+    pub fn new() -> Self {
         Self {
             work_time: 25,
             rest_time: 5,
             current_tomato: 0,
-            stdin_receiver,
+            stdin_receiver: spawn_stdin_channel(),
             reward_emoji_iter: Box::new(["🍅", "🥗", "🍝", "🍕"].into_iter().cycle()),
             micro_management_emoji_iter: Box::new(["👀", "🔫", "👮", "🚨"].into_iter().cycle()),
         }
     }
 
-    pub fn work_time(self, work_time: u32) -> Self {
+    pub fn set_work_time(self, work_time: u32) -> Self {
+        (work_time != 0)
+            .then_some(())
+            .unwrap_or_explode("the work_time argument can't be zero!");
         Self { work_time, ..self }
     }
 
-    pub fn rest_time(self, rest_time: u32) -> Self {
+    pub fn set_rest_time(self, rest_time: u32) -> Self {
+        (rest_time != 0)
+            .then_some(())
+            .unwrap_or_explode("the rest_time argument can't be zero!");
         Self { rest_time, ..self }
     }
 
     pub fn run_sprint(mut self) {
         while self.current_tomato < 4 {
-            self.run_once();
-        }
-    }
-
-    pub fn run_indefinetely(mut self) {
-        loop {
             self.run_once();
         }
     }
