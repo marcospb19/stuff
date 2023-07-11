@@ -1,12 +1,12 @@
 # Tomate
 
-Um pomodoro na CLI.
+Um pomodoro na `CLI`.
 
 # Uso
 
 Tomate roda uma sessão de 4 pomodoros:
 
-```sh
+```powershell
 # 25/5
 tomate
 
