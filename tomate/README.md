@@ -17,4 +17,4 @@ tomate 15
 tomate 15 3
 ```
 
-Aperte ENTER para pausar o timer, ou `p` e ENTER para Pular o timer atual.
+Aperte ENTER para pausar o timer, ou `p` e ENTER para pular o timer atual.

@@ -4,6 +4,14 @@ pub trait UnwrapOrExplode<T> {
     fn unwrap_or_explode(self, message: &str) -> T;
 }
 
+impl UnwrapOrExplode<()> for bool {
+    fn unwrap_or_explode(self, message: &str) {
+        if let false = self {
+            explode_error(message);
+        }
+    }
+}
+
 impl<T> UnwrapOrExplode<T> for Option<T> {
     fn unwrap_or_explode(self, message: &str) -> T {
         match self {
@@ -23,6 +31,6 @@ impl<T, E> UnwrapOrExplode<T> for Result<T, E> {
 }
 
 fn explode_error(message: &str) -> ! {
-    crate::show!("Error".red(), ": ", format_args!("{message}"));
+    crate::showln!("Error".red(), ": ", format_args!("{message}"));
     std::process::exit(1)
 }

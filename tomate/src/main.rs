@@ -1,12 +1,15 @@
+mod bar_integration;
 mod colors;
 mod error;
 mod nightly;
 mod notification;
 mod stdin;
+mod time;
+
+const CLEAR_LINE: &str = "\x1B[2K";
 
 use std::{
-    fmt::Display,
-    io,
+    fmt, io,
     io::Write,
     sync::mpsc::Receiver,
     time::{Duration, Instant},
@@ -16,7 +19,12 @@ use clap::Parser;
 use owo_colors::OwoColorize;
 
 use crate::{
-    error::UnwrapOrExplode, nightly::recv_deadline, notification::send_notification, stdin::spawn_stdin_channel,
+    bar_integration::{BarMessage, BarMessager},
+    error::UnwrapOrExplode,
+    nightly::recv_deadline,
+    notification::send_notification,
+    stdin::spawn_stdin_channel,
+    time::Time,
 };
 
 const MINUTE: Duration = Duration::from_secs(60);
@@ -49,6 +57,7 @@ struct Tomato {
     stdin_receiver: Receiver<String>,
     reward_emoji_iter: Box<dyn Iterator<Item = &'static str>>,
     micro_management_emoji_iter: Box<dyn Iterator<Item = &'static str>>,
+    bar_messager: BarMessager,
 }
 
 impl Tomato {
@@ -60,20 +69,23 @@ impl Tomato {
             stdin_receiver: spawn_stdin_channel(),
             reward_emoji_iter: Box::new(["🍅", "🥗", "🍝", "🍕"].into_iter().cycle()),
             micro_management_emoji_iter: Box::new(["👀", "🔫", "👮", "🚨"].into_iter().cycle()),
+            bar_messager: BarMessager::new().unwrap_or_explode("Failed to connect bar messager"),
         }
     }
 
     pub fn set_work_time(self, work_time: u32) -> Self {
-        (work_time != 0)
-            .then_some(())
-            .unwrap_or_explode("the work_time argument can't be zero!");
+        (work_time != 0).unwrap_or_explode("the work_time argument can't be zero!");
+
+        (work_time < 60).unwrap_or_explode("the work_time argument cannot be bigger than a hour.");
+
         Self { work_time, ..self }
     }
 
     pub fn set_rest_time(self, rest_time: u32) -> Self {
-        (rest_time != 0)
-            .then_some(())
-            .unwrap_or_explode("the rest_time argument can't be zero!");
+        (rest_time != 0).unwrap_or_explode("the rest_time argument can't be zero!");
+
+        (rest_time < 60).unwrap_or_explode("the rest_time argument cannot be bigger than a hour.");
+
         Self { rest_time, ..self }
     }
 
@@ -81,6 +93,8 @@ impl Tomato {
         while self.current_tomato < 4 {
             self.run_once();
         }
+
+        self.bar_messager.send_message(BarMessage::Disconnecting).unwrap();
     }
 
     fn run_once(&mut self) {
@@ -102,8 +116,7 @@ impl Tomato {
         let total_duration = MINUTE * self.work_time;
         let half_duration = total_duration / 2;
 
-        let status = "[Work]".magenta();
-        let was_skipped = self.run_pausable_timer(half_duration, half_duration, &status);
+        let was_skipped = self.run_pausable_timer(half_duration, half_duration, Stage::Work);
 
         // Extra logic to be able to send a notification at the half
         if !was_skipped {
@@ -111,7 +124,7 @@ impl Tomato {
                 "Na metade! Você está focado, não está? {}",
                 self.micro_management_emoji_iter.next().unwrap(),
             ));
-            self.run_pausable_timer(half_duration, None, &status);
+            self.run_pausable_timer(half_duration, None, Stage::Work);
         }
 
         let reward_emoji = self.reward_emoji_iter.next().unwrap();
@@ -134,15 +147,15 @@ impl Tomato {
 
     fn run_rest_timer(&mut self) {
         let total_duration = MINUTE * self.rest_time;
-        self.run_pausable_timer(total_duration, None, "[Rest]".cyan());
+        self.run_pausable_timer(total_duration, None, Stage::Rest);
         println!();
     }
 
     fn run_pausable_timer(
-        &self,
+        &mut self,
         mut remaining: Duration,
         additional_time_to_display: impl Into<Option<Duration>>,
-        status: impl Display,
+        status: Stage,
     ) -> bool {
         let additional_time_to_display = additional_time_to_display.into().unwrap_or_default();
         let start_instant = Instant::now();
@@ -153,16 +166,14 @@ impl Tomato {
         let mut stdout = io::stdout();
 
         while remaining != Duration::ZERO {
+            let time = Time::from(remaining + additional_time_to_display);
+
             // Print line
-            let display_remaining = remaining + additional_time_to_display;
-            let remaining_minutes = display_remaining.as_secs() / 60;
-            let remaining_seconds = display_remaining.as_secs() % 60;
-            write!(
-                stdout,
-                "\r  {status} {remaining_minutes:02}:{remaining_seconds:02}          ",
-            )
-            .unwrap();
+            write!(stdout, "{CLEAR_LINE}\r  {status} {time}          ").unwrap();
             stdout.flush().unwrap();
+            self.bar_messager
+                .send_message(BarMessage::Running(time, status))
+                .unwrap();
 
             // Sleep
             let instant_to_reach = start_instant + increment_sum;
@@ -170,23 +181,20 @@ impl Tomato {
             if let Ok(line) = recv_deadline(&self.stdin_receiver, instant_to_reach) {
                 go_back_one_line();
 
-                if line.contains('p') {
-                    return true;
-                } else {
-                    write!(
-                        stdout,
-                        "\r  {status} {remaining_minutes:02}:{remaining_seconds:02} {} ",
-                        "(Paused)".red()
-                    )
-                    .unwrap();
+                if !line.contains('p') {
+                    write!(stdout, "{CLEAR_LINE}\r  {status} {time} {} ", "(Paused)".red()).unwrap();
                     stdout.flush().unwrap();
+                    self.bar_messager
+                        .send_message(BarMessage::Paused(time, status))
+                        .unwrap();
 
-                    return if self.wait_unpause() {
-                        true
-                    } else {
-                        self.run_pausable_timer(remaining, additional_time_to_display, status)
-                    };
+                    if !self.wait_unpause() {
+                        return self.run_pausable_timer(remaining, additional_time_to_display, status);
+                    }
                 }
+
+                write!(stdout, "{CLEAR_LINE}\r  {status} {} at {time}.", "skipped".red()).unwrap();
+                return true;
             }
 
             // Account for slept duration
@@ -206,4 +214,19 @@ impl Tomato {
 
 fn go_back_one_line() {
     print!("\x1B[1A\x1B[{}D", u16::MAX);
+}
+
+#[derive(Clone, Copy)]
+pub enum Stage {
+    Work,
+    Rest,
+}
+
+impl fmt::Display for Stage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Work => write!(f, "{}", "[Work]".magenta()),
+            Self::Rest => write!(f, "{}", "[Rest]".cyan()),
+        }
+    }
 }

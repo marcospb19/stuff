@@ -7,3 +7,9 @@ edition = "2021"
 clap = { version = "4.3.10", features = ["derive", "wrap_help"] }
 notify-rust = "4.8.0"
 owo-colors = "3.5.0"
+cfg-if = { version = "1.0.0" }
+
+climsg-core = { git = "https://github.com/marcospb19/climsg", optional = true }
+
+[features]
+bar-integration = ["climsg-core"]
