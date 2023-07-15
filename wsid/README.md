@@ -1,10 +1,8 @@
 # What should I do?
 
-Are you unsure of what to do next from a pool of tasks?
-
-Provide them to this tool and let the oracle, I mean, pseudorandom number generator in your OS choose for you.
+Provide a list of tasks and let the random number generator (god) choose it for you!
 
 ```sh
-$ wsid sleep work-on-game fix-cv play-games
-sleep
+$ wsid play-game code-new-project procrastinate get-a-job
+procrastinate
 ```
