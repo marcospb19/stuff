@@ -35,6 +35,8 @@ cfg_if::cfg_if! {
                     },
                 };
 
+                let message = format!(" {message} ");
+
                 self.stream.send(ClientMessage::SendSignal(CLIMSG_CHANNEL.into(), message))
             }
         }
