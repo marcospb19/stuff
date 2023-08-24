@@ -25,19 +25,21 @@ cfg_if::cfg_if! {
             }
 
             pub fn send_message(&mut self, message: BarMessage) -> climsg_core::Result<()> {
-                let message = match message {
-                    BarMessage::Running(time, Stage::Work) => format!("work - {time}"),
-                    BarMessage::Running(time, Stage::Rest) => format!("rest - {time}"),
-                    BarMessage::Paused(time, Stage::Work) => format!("work - {time} (Paused)"),
-                    BarMessage::Paused(time, Stage::Rest) => format!("rest - {time} (Paused)"),
-                    BarMessage::Disconnecting => {
-                        return self.stream.send(ClientMessage::Close);
-                    },
+                let msg = match message {
+                    BarMessage::Running(time, Stage::Work) => format!(" work - {time} "),
+                    BarMessage::Running(time, Stage::Rest) => format!(" rest - {time} "),
+                    BarMessage::Paused(time, Stage::Work) => format!(" work - {time} (Paused) "),
+                    BarMessage::Paused(time, Stage::Rest) => format!(" rest - {time} (Paused) "),
+                    BarMessage::Disconnecting => String::new(),
                 };
 
-                let message = format!(" {message} ");
+                self.stream.send(ClientMessage::SendSignal(CLIMSG_CHANNEL.into(), msg))?;
 
-                self.stream.send(ClientMessage::SendSignal(CLIMSG_CHANNEL.into(), message))
+                if let BarMessage::Disconnecting = message {
+                    self.stream.send(ClientMessage::Close)
+                } else {
+                    Ok(())
+                }
             }
         }
     } else {
